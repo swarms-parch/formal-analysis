@@ -1,0 +1,108 @@
+attacker[active]
+
+// PARCH GCS-CH AUTHENTICATION
+// Enrollment and PUF reconstruction are abstracted.
+// ENC/DEC symbolically represent the XOR masking operations.
+// The BLAKE2b output split into N and PID_new is represented
+// by domain-separated symbolic projections.
+
+principal GCS[
+    knows private rg
+    knows private c_old
+
+    knows public pid_old
+    knows public n_label, pid_label
+]
+
+principal CH[
+    knows private rg
+
+    knows public pid_old
+    knows public n_label, pid_label
+
+    generates i_i
+]
+
+// M0 = {I_i}
+CH -> GCS: i_i
+
+
+principal GCS[
+    generates q, c_new
+
+    // R_i^G XOR Q
+    mask_q = ENC(rg, q)
+
+    // tau1 = H(R_i^G, Q, C_i^G, C_i^{G,new}, I_i)
+    tag1 = HASH(rg, q, c_old, c_new, i_i)
+]
+
+// M1
+GCS -> CH: mask_q, c_old, c_new, tag1
+
+
+principal CH[
+    // Recover Q
+    q_ch = DEC(rg, mask_q)
+
+    // Verify tau1
+    tag1_ch = HASH(rg, q_ch, c_old, c_new, i_i)
+    _ = ASSERT(tag1, tag1_ch)?
+
+    // Symbolic abstraction of:
+    // (R_i^{G,new}, HD_i^{G,new}) = Gen(PUF(C_i^{G,new}))
+    generates r_new
+
+    // V = BLAKE2b(Q, 36 bytes)
+    v_ch = HASH(q_ch)
+
+    // N = Trun_256(V)
+    n_ch = HASH(v_ch, n_label)
+
+    // PID_i^{G,new} = LSB_32(V)
+    pid_new_ch = HASH(v_ch, pid_label)
+
+    // R_i^{G,new} XOR N
+    mask_rnew = ENC(n_ch, r_new)
+
+    // H(C_i^{G,new}, Q, N, R_i^{G,new})
+    tag2 = HASH(c_new, q_ch, n_ch, r_new)
+]
+
+// M2
+// PID_old is already known as public protocol context.
+CH -> GCS: mask_rnew, tag2
+
+
+principal GCS[
+    // Reproduce V and N
+    v_gcs = HASH(q)
+
+    n_gcs = HASH(v_gcs, n_label)
+
+    // Recover R_i^{G,new}
+    r_new_gcs = DEC(n_gcs, mask_rnew)
+
+    // Verify M2 authenticator
+    tag2_gcs = HASH(c_new, q, n_gcs, r_new_gcs)
+    _ = ASSERT(tag2, tag2_gcs)?
+
+    // Reproduce updated pseudonym
+    pid_new_gcs = HASH(v_gcs, pid_label)
+]
+
+
+queries[
+    confidentiality? rg
+    confidentiality? q
+    confidentiality? n_ch
+    confidentiality? r_new
+
+    freshness? n_ch
+
+    equivalence? n_ch, n_gcs
+    equivalence? pid_new_ch, pid_new_gcs
+
+    authentication? GCS -> CH: tag1
+    authentication? CH -> GCS: tag2
+]

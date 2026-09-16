@@ -1,0 +1,186 @@
+attacker[active]
+
+// PARCH FAILURE-RESILIENT ACC HANDOVER
+// Enrollment is not modeled.
+// ACC_old does not participate.
+//
+// Abstractions:
+// SIGN/SIGNVERIF -> WOTS+
+// KEM_ENCAP/KEM_DECAP -> ML-KEM
+// Guarded WOTS+ public keys -> successful Merkle/ledger verification
+// Timestamp-window and numeric epoch checks are represented
+// symbolically by fresh TSA and epoch_new values.
+
+principal ACCnew[
+    knows private acc_master
+
+    knows public pid_old, pid_new, pid_h
+
+    // New handover epoch e'
+    generates epoch_new
+
+    // Next unused ACC WOTS+ index
+    generates u
+
+    // s_A,u = H(S_A, PID_A, u)
+    sk_acc_wots = HASH(acc_master, pid_new, u)
+    pk_acc_wots = PUBKEY(sk_acc_wots)
+
+    // Fresh timestamp and nonce
+    generates ts_a
+    generates na
+
+    // Ephemeral ML-KEM key pair
+    generates dk_kem
+    pk_kem = PUBKEY(dk_kem)
+
+    // ctx_H = (PID_old, PID_new, e')
+    ctx_acc = CONCAT(pid_old, pid_new, epoch_new)
+
+    // D_A = H(ctx_H, u, TS_A, N_A, H(pk_A^K))
+    da = HASH(ctx_acc, u, ts_a, na, HASH(pk_kem))
+
+    // sigma_A = WOTS+.Sign(sk_A,u, D_A)
+    sig_acc = SIGN(sk_acc_wots, da)
+]
+
+
+principal CH[
+    // Represents the reconstructed handover PUF response
+    knows private puf_secret
+
+    knows public pid_old, pid_new, pid_h
+]
+
+
+// M3 = {PID_new, e', u, TS_A, N_A, pk_A^K, sigma_A}
+// PID_new is already public protocol context.
+ACCnew -> CH: epoch_new, u, ts_a, na, pk_kem, sig_acc
+
+
+// Successful ACC Merkle-path verification is abstracted
+// as authenticated delivery of the corresponding WOTS+ key.
+ACCnew -> CH: [pk_acc_wots]
+
+
+principal CH[
+    // Reconstruct ctx_H
+    ctx_ch = CONCAT(pid_old, pid_new, epoch_new)
+
+    // Reconstruct D_A
+    da_ch = HASH(ctx_ch, u, ts_a, na, HASH(pk_kem))
+
+    // Authenticate ACCnew
+    _ = SIGNVERIF(pk_acc_wots, da_ch, sig_acc)?
+
+    // Next unused CH WOTS+ index
+    generates v
+
+    // S_i^H = H(R_i^H, PID_i^H)
+    sh_ch = HASH(puf_secret, pid_h)
+
+    // s_i,v = H(S_i^H, v)
+    sk_ch_wots = HASH(sh_ch, v)
+    pk_ch_wots = PUBKEY(sk_ch_wots)
+
+    // Fresh CH nonce
+    generates ni
+
+    // Fresh ML-KEM encapsulation randomness
+    generates kem_random
+
+    // (K_i, ct_i) = ML-KEM.Encaps(pk_A^K)
+    ki, ct = KEM_ENCAP(pk_kem, kem_random)
+
+    // CTX_i =
+    // H(ctx_H, PID_i^H, N_A, N_i, H(pk_A^K), H(ct_i))
+    //
+    // HASH supports at most 5 inputs, therefore the
+    // six-component context is represented in two stages.
+    ctxi_part_ch = HASH(
+        ctx_ch,
+        pid_h,
+        na,
+        ni,
+        HASH(pk_kem)
+    )
+
+    ctxi_ch = HASH(
+        ctxi_part_ch,
+        HASH(ct)
+    )
+
+    // SK_i,new = H(K_i, CTX_i)
+    sk_ch = HASH(ki, ctxi_ch)
+
+    // D_i = H(CTX_i, v)
+    di = HASH(ctxi_ch, v)
+
+    // sigma_i = WOTS+.Sign(sk_i,v, D_i)
+    sig_ch = SIGN(sk_ch_wots, di)
+
+    // tau_i = HMAC_SK_i,new(CTX_i)
+    tau = MAC(sk_ch, ctxi_ch)
+]
+
+
+// M4 = {PID_i^H, v, N_i, ct_i, sigma_i, tau_i}
+// PID_i^H is already public protocol context.
+CH -> ACCnew: v, ni, ct, sig_ch, tau
+
+
+// Successful CH Merkle-path verification is abstracted
+// as authenticated delivery of the corresponding WOTS+ key.
+CH -> ACCnew: [pk_ch_wots]
+
+
+principal ACCnew[
+    // Reconstruct ctx_H
+    ctx_acc2 = CONCAT(pid_old, pid_new, epoch_new)
+
+    // Reconstruct CTX_i
+    ctxi_part_acc = HASH(
+        ctx_acc2,
+        pid_h,
+        na,
+        ni,
+        HASH(pk_kem)
+    )
+
+    ctxi_acc = HASH(
+        ctxi_part_acc,
+        HASH(ct)
+    )
+
+    // Reconstruct D_i
+    di_acc = HASH(ctxi_acc, v)
+
+    // Authenticate CH
+    _ = SIGNVERIF(pk_ch_wots, di_acc, sig_ch)?
+
+    // ML-KEM.Decaps
+    ki_acc = KEM_DECAP(dk_kem, ct)?
+
+    // SK_i,new = H(K_i, CTX_i)
+    sk_acc = HASH(ki_acc, ctxi_acc)
+
+    // Verify explicit key confirmation
+    tau_acc = MAC(sk_acc, ctxi_acc)
+    _ = ASSERT(tau, tau_acc)?
+]
+
+
+queries[
+    confidentiality? acc_master
+    confidentiality? puf_secret
+    confidentiality? ki
+    confidentiality? sk_ch
+    confidentiality? sk_acc
+
+    freshness? sk_ch
+    equivalence? sk_ch, sk_acc
+
+    authentication? ACCnew -> CH: sig_acc
+    authentication? CH -> ACCnew: sig_ch
+    authentication? CH -> ACCnew: tau
+]
