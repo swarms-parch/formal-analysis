@@ -26,9 +26,9 @@ The protocols were analyzed in Verifpal using:
 The authentication model evaluates ten security queries covering:
 
 - Confidentiality
-- Session-key freshness
+- Freshness
 - Session-key agreement
-- Pseudonym agreement
+- Next-pseudonym agreement
 - GCS-to-CH authentication
 - CH-to-GCS authentication
 
