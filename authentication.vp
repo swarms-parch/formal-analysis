@@ -1,0 +1,78 @@
+attacker[active]
+
+principal GCS[
+    knows private enrollment_key
+    knows public derive_ctx
+
+    generates r_old
+    generates pid_old
+    generates c_old
+
+    enrollment_plain = CONCAT(r_old, pid_old)
+    enrollment_blob = ENC(enrollment_key, enrollment_plain)
+]
+
+// Abstract secure enrollment, before online authentication.
+GCS -> CH: [enrollment_blob]
+
+principal CH[
+    knows private enrollment_key
+    knows public derive_ctx
+
+    enrollment_open = DEC(enrollment_key, enrollment_blob)
+    r_ch, pid_ch = SPLIT(enrollment_open)?
+]
+
+principal GCS[
+    generates q
+    generates c_new
+
+    masked_q = ENC(r_old, q)
+    tau1 = HASH(r_old, q, c_old, c_new, pid_old)
+]
+
+GCS -> CH: masked_q, c_old, c_new, tau1
+
+principal CH[
+    q_ch = DEC(r_ch, masked_q)
+    tau1_check = HASH(r_ch, q_ch, c_old, c_new, pid_ch)
+    _ = ASSERT(tau1_check, tau1)?
+
+    generates r_new
+
+    n_ch, pid_new_ch = HKDF(nil, q_ch, derive_ctx)
+
+    tau2 = HASH(c_new, q_ch, n_ch, r_new, pid_ch)
+    masked_r_new = ENC(n_ch, r_new)
+
+    pid_wire = CONCAT(pid_ch, nil)
+]
+
+CH -> GCS: pid_wire, masked_r_new, tau2
+
+principal GCS[
+    pid_received, _ = SPLIT(pid_wire)?
+    _ = ASSERT(pid_old, pid_received)?
+
+    n_gcs, pid_new_gcs = HKDF(nil, q, derive_ctx)
+    r_new_gcs = DEC(n_gcs, masked_r_new)
+
+    tau2_check = HASH(c_new, q, n_gcs, r_new_gcs, pid_old)
+    _ = ASSERT(tau2_check, tau2)?
+]
+
+queries[
+    confidentiality? r_old
+    confidentiality? q
+    confidentiality? r_new
+    confidentiality? n_ch
+
+    authentication? GCS -> CH: tau1
+    authentication? CH -> GCS: tau2
+
+    freshness? tau1
+    freshness? tau2
+
+    equivalence? n_ch, n_gcs
+    equivalence? pid_new_ch, pid_new_gcs
+]
