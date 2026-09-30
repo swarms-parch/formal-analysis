@@ -23,7 +23,7 @@ The protocols were analyzed in Verifpal using:
 
 ## GCS–CH Authentication
 
-The authentication model evaluates nine security queries covering:
+The authentication model evaluates ten security queries covering:
 
 - Confidentiality
 - Session-key freshness
@@ -32,7 +32,7 @@ The authentication model evaluates nine security queries covering:
 - GCS-to-CH authentication
 - CH-to-GCS authentication
 
-All nine queries pass.
+All ten queries pass.
 
 ## Failure-Resilient ACC Handover
 
